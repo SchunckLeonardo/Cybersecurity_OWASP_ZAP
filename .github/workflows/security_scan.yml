@@ -22,6 +22,7 @@ jobs:
 
       - name: 3. Build e inicia a aplicação
         run: |
+          chmod +x gradlew
           ./gradlew bootRun &
           echo "Aguardando a aplicação iniciar..."
           for i in {1..30}; do
