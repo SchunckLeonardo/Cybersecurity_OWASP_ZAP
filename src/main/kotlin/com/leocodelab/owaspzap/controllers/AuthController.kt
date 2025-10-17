@@ -1,43 +1,105 @@
 package com.leocodelab.owaspzap.controllers
 
-import com.leocodelab.owaspzap.entities.AuthRequestDTO
-import org.springframework.http.HttpStatus
-import org.springframework.http.MediaType
-import org.springframework.http.ResponseEntity
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RequestMapping
-import org.springframework.web.bind.annotation.RequestParam
-import org.springframework.web.bind.annotation.RestController
-
-val usersAllowed = mutableListOf("admin", "user1", "user2")
-val passwordsAllowed = mutableListOf("admin", "user1", "user2")
+import jakarta.servlet.http.HttpServletResponse
+import org.springframework.web.bind.annotation.*
+import org.springframework.jdbc.core.JdbcTemplate
 
 @RestController
-@RequestMapping("/auth")
-class AuthController {
+@RequestMapping("/api/auth")
+class LoginController(private val jdbcTemplate: JdbcTemplate) {
 
-    @PostMapping
-    fun authenticate(
-        @RequestBody authRequestDTO: AuthRequestDTO
-    ): Boolean {
-        return usersAllowed.contains(authRequestDTO.username) && passwordsAllowed.contains(authRequestDTO.password)
+    @PostMapping("/login-vulnerable")
+    fun loginVulnerable(
+        @RequestParam username: String,
+        @RequestParam password: String
+    ): Map<String, Any> {
+        val query = "SELECT * FROM users WHERE username = '$username' AND password = '$password'"
+
+        return try {
+            val users = jdbcTemplate.queryForList(query)
+
+            if (users.isNotEmpty()) {
+                mapOf(
+                    "success" to true,
+                    "message" to "Login bem-sucedido",
+                    "user" to users[0]
+                )
+            } else {
+                mapOf(
+                    "success" to false,
+                    "message" to "Credenciais inválidas"
+                )
+            }
+        } catch (e: Exception) {
+            mapOf(
+                "success" to false,
+                "message" to "Erro no login: ${e.message}"
+            )
+        }
     }
 
-    @PostMapping("/register")
-    fun registerUser(
-        @RequestBody authRequestDTO: AuthRequestDTO
-    ): ResponseEntity<Any> {
-        usersAllowed.add(authRequestDTO.username)
-        passwordsAllowed.add(authRequestDTO.password)
-        return ResponseEntity.status(HttpStatus.CREATED).build()
+    @GetMapping("/profile-vulnerable")
+    fun profileVulnerable(
+        @RequestParam name: String,
+        response: HttpServletResponse
+    ): String {
+        response.contentType = "text/html"
+        return """
+            <html>
+                <body>
+                    <h1>Bem-vindo, $name!</h1>
+                    <p>Seu perfil foi carregado com sucesso.</p>
+                </body>
+            </html>
+        """.trimIndent()
     }
 
-    @GetMapping("/search", produces = [MediaType.TEXT_HTML_VALUE])
-    fun search(@RequestParam query: String): ResponseEntity<String> {
-        val body = "<html><body><h1>Resultado da busca por: $query</h1></body></html>"
-        return ResponseEntity.ok(body)
+    @PostMapping("/update-password-vulnerable")
+    fun updatePasswordVulnerable(
+        @RequestParam userId: String,
+        @RequestParam newPassword: String
+    ): Map<String, Any> {
+        val query = "UPDATE users SET password = ? WHERE id = ?"
+        jdbcTemplate.update(query, newPassword, userId)
+
+        return mapOf(
+            "success" to true,
+            "message" to "Senha atualizada"
+        )
     }
 
+    @GetMapping("/users-list-vulnerable")
+    fun usersListVulnerable(): List<Map<String, Any>> {
+        val query = "SELECT id, username, email, password, credit_card FROM users"
+        return jdbcTemplate.queryForList(query)
+    }
+
+    @PostMapping("/login-secure")
+    fun loginSecure(
+        @RequestParam username: String,
+        @RequestParam password: String
+    ): Map<String, Any> {
+        val query = "SELECT * FROM users WHERE username = ? AND password = ?"
+
+        return try {
+            val users = jdbcTemplate.queryForList(query, username, password)
+
+            if (users.isNotEmpty()) {
+                mapOf(
+                    "success" to true,
+                    "message" to "Login bem-sucedido"
+                )
+            } else {
+                mapOf(
+                    "success" to false,
+                    "message" to "Credenciais inválidas"
+                )
+            }
+        } catch (e: Exception) {
+            mapOf(
+                "success" to false,
+                "message" to "Erro no login"
+            )
+        }
+    }
 }

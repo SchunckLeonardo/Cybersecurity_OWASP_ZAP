@@ -1,165 +1,141 @@
-name: OWASP ZAP Security Scan
+name: Security Scan with OWASP ZAP
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
 
 jobs:
-  zap_scan:
+  security-scan:
     runs-on: ubuntu-latest
-    name: Scan de Segurança com OWASP ZAP
 
     steps:
-      - name: 1. Checkout do código
-        uses: actions/checkout@v4
+      - name: Checkout código
+        uses: actions/checkout@v3
 
-      - name: 2. Setup do Java (JDK)
-        uses: actions/setup-java@v4
+      - name: Setup Java 21
+        uses: actions/setup-java@v3
         with:
-          distribution: 'temurin'
           java-version: '21'
+          distribution: 'temurin'
 
-      - name: 3. Build da aplicação
-        run: |
-          chmod +x gradlew
-          ./gradlew build -x test
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
 
-      - name: 4. Inicia a aplicação em background
+      - name: Build aplicação Spring Boot
+        run: ./gradlew build -x test
+
+      - name: Iniciar aplicação em background
         run: |
-          nohup java -jar build/libs/*.jar > app.log 2>&1 &
+          ./gradlew bootRun &
           echo $! > app.pid
-          echo "PID da aplicação: $(cat app.pid)"
+          echo "Aguardando aplicação iniciar..."
+          sleep 30
 
-      - name: 5. Aguarda aplicação inicializar
+      - name: Verificar se aplicação está rodando
         run: |
-          echo "Aguardando a aplicação iniciar..."
-          max_attempts=60
-          attempt=0
+          curl -f http://localhost:8080/actuator/health || exit 1
+          echo "Aplicação está respondendo!"
+
+      - name: Executar OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: 'http://localhost:8080'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a -j -l PASS'
+          allow_issue_writing: false
+          artifact_name: 'zap-scan-report'
+          fail_action: false
+
+      - name: Executar OWASP ZAP Full Scan
+        run: |
+          docker run --network="host" -v $(pwd):/zap/wrk/:rw \
+            -t ghcr.io/zaproxy/zaproxy:stable bash -c \
+            "zap.sh -cmd -quickurl http://localhost:8080 -quickprogress -quickout /zap/wrk/zap-report.html"
+
+      - name: Analisar resultados do ZAP
+        id: analyze_zap
+        run: |
+          if [ -f zap-report.html ]; then
+            echo "Relatório gerado com sucesso"
           
-          while [ $attempt -lt $max_attempts ]; do
-            if curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1 || \
-               curl -sf http://localhost:8080 >/dev/null 2>&1; then
-              echo "✓ Aplicação está no ar!"
-              break
-            fi
+            # Extrair informações do relatório
+            HIGH_ALERTS=$(grep -o "riskcode=\"3\"" zap-report.html | wc -l || echo "0")
+            CRITICAL_ALERTS=$(grep -o "riskcode=\"4\"" zap-report.html | wc -l || echo "0")
+            MEDIUM_ALERTS=$(grep -o "riskcode=\"2\"" zap-report.html | wc -l || echo "0")
+            LOW_ALERTS=$(grep -o "riskcode=\"1\"" zap-report.html | wc -l || echo "0")
+            INFO_ALERTS=$(grep -o "riskcode=\"0\"" zap-report.html | wc -l || echo "0")
           
-            attempt=$((attempt + 1))
-            echo "Tentativa $attempt/$max_attempts..."
-            sleep 2
+            TOTAL_ALERTS=$((HIGH_ALERTS + CRITICAL_ALERTS + MEDIUM_ALERTS + LOW_ALERTS + INFO_ALERTS))
           
-            if [ $attempt -eq $max_attempts ]; then
-              echo "✗ Erro: Aplicação não inicializou no tempo esperado"
-              echo "Logs da aplicação:"
-              cat app.log
+            echo "=== RESUMO DA ANÁLISE DE SEGURANÇA ==="
+            echo "Total de alertas: $TOTAL_ALERTS"
+            echo "Críticos: $CRITICAL_ALERTS"
+            echo "Altos: $HIGH_ALERTS"
+            echo "Médios: $MEDIUM_ALERTS"
+            echo "Baixos: $LOW_ALERTS"
+            echo "Informativos: $INFO_ALERTS"
+            echo "======================================"
+          
+            # Exportar para variáveis de ambiente
+            echo "high_alerts=$HIGH_ALERTS" >> $GITHUB_OUTPUT
+            echo "critical_alerts=$CRITICAL_ALERTS" >> $GITHUB_OUTPUT
+            echo "total_alerts=$TOTAL_ALERTS" >> $GITHUB_OUTPUT
+          
+            # Falhar se houver vulnerabilidades críticas ou altas
+            if [ "$CRITICAL_ALERTS" -gt 0 ] || [ "$HIGH_ALERTS" -gt 0 ]; then
+              echo "❌ FALHA: Vulnerabilidades críticas ou altas detectadas!"
               exit 1
             fi
-          done
-
-      - name: 6. Verificação da API Docs
-        run: |
-          echo "Verificando documentação da API..."
-          if curl -sf http://localhost:8080/v3/api-docs >/dev/null; then
-            echo "✓ Documentação da API está acessível!"
-            curl -s http://localhost:8080/v3/api-docs | jq . || true
           else
-            echo "✗ Aviso: Documentação não encontrada em /v3/api-docs"
-            echo "Tentando outros endpoints comuns..."
-            curl -s http://localhost:8080/swagger-ui.html || true
-            curl -s http://localhost:8080/api-docs || true
-          fi
-
-      - name: 7. OWASP ZAP API Scan
-        uses: zaproxy/action-api-scan@v0.5.0
-        with:
-          docker_name: 'ghcr.io/zaproxy/zaproxy:stable'
-          target: 'http://host.docker.internal:8080/v3/api-docs'
-          format: 'openapi'
-          fail_action: false
-          cmd_options: '-a -r zap_report.html -J zap_report.json -w zap_report.md'
-        continue-on-error: true
-
-      - name: 8. Verificar se relatórios foram gerados
-        if: always()
-        run: |
-          echo "Verificando arquivos gerados:"
-          ls -lah zap_report.* 2>/dev/null || echo "Nenhum relatório encontrado"
-          
-          if [ -f "zap_report.json" ]; then
-            echo "Conteúdo do JSON (primeiras linhas):"
-            head -n 50 zap_report.json
-          fi
-
-      - name: 9. Upload do Relatório ZAP
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: relatorio-zap-seguranca
-          path: |
-            zap_report.*
-            app.log
-          if-no-files-found: warn
-
-      - name: 10. Análise de Vulnerabilidades
-        if: always()
-        run: |
-          if [ ! -f "zap_report.json" ]; then
-            echo "⚠️ Relatório JSON não foi gerado. Pulando análise."
-            exit 0
-          fi
-          
-          # Instala jq se necessário
-          command -v jq >/dev/null 2>&1 || sudo apt-get update && sudo apt-get install -y jq
-          
-          # Verifica estrutura do JSON
-          echo "Estrutura do relatório:"
-          jq 'keys' zap_report.json
-          
-          # Conta alertas por severidade
-          high_alerts=$(jq '[.site[]?.alerts[]? | select(.riskcode == "3" or .risk == "High")] | length' zap_report.json 2>/dev/null || echo "0")
-          medium_alerts=$(jq '[.site[]?.alerts[]? | select(.riskcode == "2" or .risk == "Medium")] | length' zap_report.json 2>/dev/null || echo "0")
-          low_alerts=$(jq '[.site[]?.alerts[]? | select(.riskcode == "1" or .risk == "Low")] | length' zap_report.json 2>/dev/null || echo "0")
-          info_alerts=$(jq '[.site[]?.alerts[]? | select(.riskcode == "0" or .risk == "Informational")] | length' zap_report.json 2>/dev/null || echo "0")
-          
-          echo "═══════════════════════════════════════"
-          echo "📊 RESUMO DAS VULNERABILIDADES"
-          echo "═══════════════════════════════════════"
-          echo "🔴 Risco Alto:    $high_alerts"
-          echo "🟠 Risco Médio:   $medium_alerts"
-          echo "🟡 Risco Baixo:   $low_alerts"
-          echo "ℹ️  Informacional: $info_alerts"
-          echo "═══════════════════════════════════════"
-          
-          # Lista vulnerabilidades de alto risco
-          if [ "$high_alerts" -gt 0 ]; then
-            echo ""
-            echo "🔴 VULNERABILIDADES DE ALTO RISCO:"
-            jq -r '.site[]?.alerts[]? | select(.riskcode == "3" or .risk == "High") | "  - \(.name) (\(.count) ocorrências)"' zap_report.json 2>/dev/null || true
-          fi
-          
-          # Lista vulnerabilidades de médio risco
-          if [ "$medium_alerts" -gt 0 ]; then
-            echo ""
-            echo "🟠 VULNERABILIDADES DE MÉDIO RISCO:"
-            jq -r '.site[]?.alerts[]? | select(.riskcode == "2" or .risk == "Medium") | "  - \(.name) (\(.count) ocorrências)"' zap_report.json 2>/dev/null || true
-          fi
-          
-          # Define critério de falha
-          total_critical=$((high_alerts + medium_alerts))
-          
-          if [ "$total_critical" -gt 0 ]; then
-            echo ""
-            echo "❌ Build FALHOU: $total_critical vulnerabilidade(s) crítica(s) encontrada(s)!"
+            echo "Erro: Relatório não foi gerado"
             exit 1
-          else
-            echo ""
-            echo "✅ Build APROVADO: Nenhuma vulnerabilidade crítica encontrada!"
           fi
 
-      - name: 11. Finalizar aplicação
+      - name: Upload relatório ZAP como artefato
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: zap-security-report
+          path: |
+            zap-report.html
+            zap-report.xml
+          retention-days: 30
+
+      - name: Parar aplicação
         if: always()
         run: |
           if [ -f app.pid ]; then
-            echo "Finalizando aplicação..."
-            kill $(cat app.pid) 2>/dev/null || true
+            kill $(cat app.pid) || true
           fi
+
+      - name: Comentar PR com resultados
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const highAlerts = '${{ steps.analyze_zap.outputs.high_alerts }}';
+            const criticalAlerts = '${{ steps.analyze_zap.outputs.critical_alerts }}';
+            const totalAlerts = '${{ steps.analyze_zap.outputs.total_alerts }}';
+            
+            const comment = `## 🔒 Relatório de Segurança - OWASP ZAP
+            
+            | Severidade | Quantidade |
+            |------------|------------|
+            | 🔴 Crítico | ${criticalAlerts} |
+            | 🟠 Alto    | ${highAlerts} |
+            | **Total**  | **${totalAlerts}** |
+            
+            ${parseInt(criticalAlerts) + parseInt(highAlerts) > 0 ? '❌ **Pipeline falhou devido a vulnerabilidades críticas/altas**' : '✅ Nenhuma vulnerabilidade crítica detectada'}
+            
+            📊 Baixe o relatório completo nos artefatos do workflow.
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
