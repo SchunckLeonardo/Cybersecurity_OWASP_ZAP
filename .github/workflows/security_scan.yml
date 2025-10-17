@@ -45,9 +45,9 @@ jobs:
             -v $(pwd):/zap/wrk/:rw \
             --network="host" \
             --user $(id -u):$(id -g) \
+            -e HOME=/zap/wrk \
             ghcr.io/zaproxy/zaproxy zap-baseline.py \
             -t http://127.0.0.1:8080 \
-            -z "-config home=/zap/wrk/" \
             -r report.html \
             -w report.md || echo "Scan ZAP concluído com possíveis alertas."
 
@@ -74,3 +74,4 @@ jobs:
         with:
           name: relatorio-zap
           path: report.html
+
