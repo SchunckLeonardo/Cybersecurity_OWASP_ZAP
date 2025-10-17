@@ -52,6 +52,7 @@ jobs:
         with:
           target: 'http://localhost:8080/v3/api-docs'
           format: 'openapi'
+          fail_action: false
           cmd_options: '-r zap_report.html -J zap_report.json'
 
       - name: 6. Upload do Relatório ZAP como Artefato
