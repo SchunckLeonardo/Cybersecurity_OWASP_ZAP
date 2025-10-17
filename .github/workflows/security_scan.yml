@@ -44,6 +44,7 @@ jobs:
           docker run --rm \
             -v $(pwd):/zap/wrk/:rw \
             --network="host" \
+            --user $(id -u):$(id -g) \
             ghcr.io/zaproxy/zaproxy zap-baseline.py \
             -t http://127.0.0.1:8080 \
             -r report.html \
