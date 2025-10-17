@@ -34,7 +34,7 @@ jobs:
           ./gradlew bootRun &
           echo $! > app.pid
           echo "Aguardando aplicação iniciar..."
-          sleep 30 # Aguarda um tempo para a aplicação subir completamente
+          sleep 30
 
       - name: Verificar se aplicação está rodando
         run: |
@@ -42,7 +42,6 @@ jobs:
           echo "Aplicação está respondendo!"
 
       - name: Executar OWASP ZAP Full Scan
-        # Usamos continue-on-error para que a análise dos resultados seja sempre executada
         continue-on-error: true
         run: |
           docker run \
@@ -57,39 +56,81 @@ jobs:
               -x zap-report.xml
 
       - name: Analisar resultados do ZAP
-        id: analyze_zap
+        id: analyze
         run: |
-          if [ -f zap-report.xml ]; then
-            echo "Relatório gerado com sucesso"
-          
-            # É mais confiável extrair de um XML
-            HIGH_ALERTS=$(grep -o '<riskcode>3</riskcode>' zap-report.xml | wc -l)
-            MEDIUM_ALERTS=$(grep -o '<riskcode>2</riskcode>' zap-report.xml | wc -l)
-            LOW_ALERTS=$(grep -o '<riskcode>1</riskcode>' zap-report.xml | wc -l)
-            INFO_ALERTS=$(grep -o '<riskcode>0</riskcode>' zap-report.xml | wc -l)
-          
-            # Não existe risco "Crítico" (4) no ZAP por padrão, o mais alto é 3 (High)
-            TOTAL_ALERTS=$((HIGH_ALERTS + MEDIUM_ALERTS + LOW_ALERTS + INFO_ALERTS))
-          
-            echo "=== RESUMO DA ANÁLISE DE SEGURANÇA ==="
-            echo "Total de alertas: $TOTAL_ALERTS"
-            echo "Altos: $HIGH_ALERTS"
-            echo "Médios: $MEDIUM_ALERTS"
-            echo "Baixos: $LOW_ALERTS"
-            echo "Informativos: $INFO_ALERTS"
-            echo "======================================"
-          
-            echo "high_alerts=$HIGH_ALERTS" >> $GITHUB_OUTPUT
-            echo "total_alerts=$TOTAL_ALERTS" >> $GITHUB_OUTPUT
-          
-            if [ "$HIGH_ALERTS" -gt 0 ]; then
-              echo "❌ FALHA: Vulnerabilidades de nível alto detectadas!"
-              exit 1
-            fi
-          else
-            echo "Erro: Relatório XML não foi gerado"
-            exit 1
-          fi
+           echo "=== ANÁLISE DE SEGURANÇA OWASP ZAP ==="
+           
+           # Verifica se o relatório XML foi gerado
+           if [ ! -f "zap-baseline-report.xml" ]; then
+             echo "⚠️ Relatório XML não encontrado. Verificando HTML..."
+             if [ -f "zap-baseline-report.html" ]; then
+               echo "Relatório HTML encontrado, mas análise será limitada."
+             else
+               echo "❌ Nenhum relatório foi gerado!"
+               exit 1
+             fi
+           fi
+           
+           # Analisa o XML se disponível
+           if [ -f "zap-baseline-report.xml" ]; then
+             # Conta alertas por severidade usando xmllint se disponível
+             if command -v xmllint &> /dev/null; then
+               CRITICAL=$(xmllint --xpath 'count(//alertitem[riskcode="4"])' zap-baseline-report.xml 2>/dev/null || echo "0")
+               HIGH=$(xmllint --xpath 'count(//alertitem[riskcode="3"])' zap-baseline-report.xml 2>/dev/null || echo "0")
+               MEDIUM=$(xmllint --xpath 'count(//alertitem[riskcode="2"])' zap-baseline-report.xml 2>/dev/null || echo "0")
+               LOW=$(xmllint --xpath 'count(//alertitem[riskcode="1"])' zap-baseline-report.xml 2>/dev/null || echo "0")
+               INFO=$(xmllint --xpath 'count(//alertitem[riskcode="0"])' zap-baseline-report.xml 2>/dev/null || echo "0")
+             else
+               # Fallback usando grep
+               CRITICAL=$(grep -c 'riskcode>4<' zap-baseline-report.xml || echo "0")
+               HIGH=$(grep -c 'riskcode>3<' zap-baseline-report.xml || echo "0")
+               MEDIUM=$(grep -c 'riskcode>2<' zap-baseline-report.xml || echo "0")
+               LOW=$(grep -c 'riskcode>1<' zap-baseline-report.xml || echo "0")
+               INFO=$(grep -c 'riskcode>0<' zap-baseline-report.xml || echo "0")
+             fi
+           else
+             # Fallback para HTML
+             CRITICAL=$(grep -o 'High (High)' zap-baseline-report.html | wc -l || echo "0")
+             HIGH=$(grep -o 'Medium (High)' zap-baseline-report.html | wc -l || echo "0")
+             MEDIUM=$(grep -o 'Medium (Medium)' zap-baseline-report.html | wc -l || echo "0")
+             LOW=$(grep -o 'Low (Low)' zap-baseline-report.html | wc -l || echo "0")
+             INFO=$(grep -o 'Informational' zap-baseline-report.html | wc -l || echo "0")
+           fi
+           
+           TOTAL=$((CRITICAL + HIGH + MEDIUM + LOW + INFO))
+           
+           echo "📊 RESUMO DE VULNERABILIDADES"
+           echo "======================================"
+           echo "🔴 Críticas:      $CRITICAL"
+           echo "🟠 Altas:         $HIGH"
+           echo "🟡 Médias:        $MEDIUM"
+           echo "🔵 Baixas:        $LOW"
+           echo "⚪ Informativas:  $INFO"
+           echo "────────────────────────────────────"
+           echo "📈 TOTAL:         $TOTAL"
+           echo "======================================"
+           
+           # Exporta para outputs
+           echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+           echo "high=$HIGH" >> $GITHUB_OUTPUT
+           echo "medium=$MEDIUM" >> $GITHUB_OUTPUT
+           echo "low=$LOW" >> $GITHUB_OUTPUT
+           echo "info=$INFO" >> $GITHUB_OUTPUT
+           echo "total=$TOTAL" >> $GITHUB_OUTPUT
+           
+           # Determina se deve falhar
+           if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+             echo ""
+             echo "❌ PIPELINE FALHOU!"
+             echo "Motivo: $CRITICAL vulnerabilidade(s) crítica(s) e $HIGH alta(s) detectada(s)"
+             echo ""
+             exit 1
+           else
+             echo ""
+             echo "✅ PIPELINE APROVADO!"
+             echo "Nenhuma vulnerabilidade crítica ou alta detectada."
+             echo ""
+           fi
 
       - name: Upload relatório ZAP como artefato
         if: always()
