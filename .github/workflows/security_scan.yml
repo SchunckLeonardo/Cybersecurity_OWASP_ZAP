@@ -20,28 +20,33 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: 3. Build e inicia a aplicação
+      - name: 3. Permissão e build
         run: |
           chmod +x gradlew
           ./gradlew bootRun &
-          echo "Aguardando a aplicação iniciar..."
+          echo "Iniciando aplicação em background..."
+
+      - name: 4. Verificar se app está respondendo
+        run: |
           for i in {1..30}; do
             if curl -s http://localhost:8080 >/dev/null; then
-              echo "Aplicação está no ar!"
-              break
+              echo "✅ Aplicação está no ar!"
+              exit 0
             fi
-            echo "Aguardando..."
+            echo "Aguardando aplicação iniciar..."
             sleep 5
           done
+          echo "❌ A aplicação não respondeu a tempo"
+          exit 1
 
-      - name: 4. OWASP ZAP Full Scan
+      - name: 5. OWASP ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.11.0
         with:
-          target: 'http://localhost:8080/auth'
+          target: 'http://host.docker.internal:8080'
           fail_action: true
-          cmd_options: '-r zap_report.html -u http://localhost:8080/auth/register -u http://localhost:8080/auth/search'
+          cmd_options: '-r zap_report.html -u http://host.docker.internal:8080/auth -u http://host.docker.internal:8080/auth/register -u http://host.docker.internal:8080/auth/search'
 
-      - name: 5. Upload do Relatório ZAP como Artefato
+      - name: 6. Upload do Relatório ZAP como Artefato
         if: always()
         uses: actions/upload-artifact@v4
         with:
