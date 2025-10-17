@@ -32,16 +32,14 @@ jobs:
           sleep 30
 
       - name: ZAP Full Scan
-        uses: zaproxy/action-full-scan@v0.10.0
+        uses: zaproxy/action-full-scan@v0.12.0
         with:
-          target: 'http://localhost:8080'
-
-          report_html: 'zap_report.html'
+          target: 'http://localhost:8080/'
 
       - name: Upload ZAP Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ZAP Scan Report
-          path: zap_report.html
+          path: zap_scan
           retention-days: 7
