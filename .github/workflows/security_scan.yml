@@ -1,44 +1,55 @@
+# Nome do Workflow que aparecerá na aba "Actions" do GitHub
 name: Análise de Segurança com OWASP ZAP
 
+# Define os gatilhos para o workflow
 on:
+  # Executa quando houver um push para a branch 'main'
   push:
     branches: [ "main" ]
+  # Permite que o workflow seja executado manualmente a partir da interface do GitHub
   workflow_dispatch:
 
 jobs:
+  # Define um job chamado 'zap_scan'
   zap_scan:
+    # O tipo de máquina virtual que o job irá rodar
     runs-on: ubuntu-latest
-
+    
     steps:
+      # 1. Baixa o código do repositório para a máquina virtual
       - name: Checkout do código
         uses: actions/checkout@v4
 
+      # 2. Configura o ambiente Java com a versão 21
       - name: Configurar JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
+      # 3. Concede permissão de execução para o Gradle Wrapper
       - name: Dar permissão de execução ao gradlew
         run: chmod +x ./gradlew
 
+      # 4. Inicia a aplicação Spring Boot em background
       - name: Iniciar aplicação em background
         run: |
           ./gradlew bootRun &
           echo "Aguardando 30 segundos para a aplicação iniciar..."
           sleep 30
 
+      # 5. Executa o Scan de Segurança com OWASP ZAP
       - name: Executar OWASP ZAP Baseline Scan
         run: |
           docker run --rm \
             -v $(pwd):/zap/wrk/:rw \
             --network="host" \
-            owasp/zap2docker-stable zap-baseline.py \
+            ghcr.io/zaproxy/zaproxy zap-baseline.py \
             -t http://127.0.0.1:8080 \
             -r report.html \
-            -w report.md \
-            --hook=/zap/wrk/zap-hooks.py || echo "Scan ZAP concluído com possíveis alertas."
+            -w report.md || echo "Scan ZAP concluído com possíveis alertas."
 
+      # 6. Verifica se há vulnerabilidades de severidade Alta
       - name: Verificar Resultados do Scan
         run: |
           echo "Analisando o relatório em busca de vulnerabilidades de severidade Alta..."
@@ -55,6 +66,7 @@ jobs:
             echo "Nenhuma vulnerabilidade de severidade Alta foi encontrada."
           fi
 
+      # 7. Salva o relatório HTML como um artefato do job
       - name: Fazer upload do relatório como artefato
         uses: actions/upload-artifact@v4
         with:
