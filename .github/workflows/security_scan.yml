@@ -37,10 +37,10 @@ jobs:
 
       - name: ZAP Full Scan
         uses: zaproxy/action-api-scan@v0.9.0
-        continue-on-error: true
         with:
           target: 'http://localhost:8080/v3/api-docs'
           format: 'openapi'
+          rules_file_name: .zap/zap-rules.conf
 
       - name: Upload ZAP Report
         if: always()
