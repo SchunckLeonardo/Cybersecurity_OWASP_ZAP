@@ -41,14 +41,11 @@ jobs:
       # 5. Executa o Scan de Segurança com OWASP ZAP
       - name: Executar OWASP ZAP Baseline Scan
         run: |
-          # Cria um diretório para ser usado como 'home' dentro do container, evitando problemas de permissão
-          mkdir ./zap-home
           docker run --rm \
-            -v $(pwd):/zap/wrk/:rw \
+            -v $(pwd):/home/zap/:rw \
             --network="host" \
             --user $(id -u):$(id -g) \
-            -w /zap/wrk \
-            -e HOME=/zap/wrk/zap-home \
+            -w /home/zap \
             ghcr.io/zaproxy/zaproxy zap-baseline.py \
             -t http://127.0.0.1:8080 \
             -r report.html \
