@@ -37,9 +37,9 @@ jobs:
       - name: 4. OWASP ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.11.0
         with:
-          target: 'http://localhost:8080'
+          target: 'http://localhost:8080/auth'
           fail_action: true
-          cmd_options: '-r zap_report.html'
+          cmd_options: '-r zap_report.html -u http://localhost:8080/auth/register -u http://localhost:8080/auth/search'
 
       - name: 5. Upload do Relatório ZAP como Artefato
         if: always()
