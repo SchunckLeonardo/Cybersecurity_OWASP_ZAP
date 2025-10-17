@@ -47,14 +47,10 @@ jobs:
             exit 1
           fi
 
-      - name: 5. Descobrir o IP do Host
-        id: host_ip
-        run: echo "ip=$(/sbin/ip route|awk '/default/ { print $3 }')" >> $GITHUB_OUTPUT
-
       - name: 6. OWASP ZAP API Scan
         uses: zaproxy/action-api-scan@v0.5.0
         with:
-          target: 'http://${{ steps.host_ip.outputs.ip }}:8080/v3/api-docs'
+          target: 'http://localhost:8080/v3/api-docs'
           format: 'openapi'
           fail_action: true
           cmd_options: '-r zap_report.html'
