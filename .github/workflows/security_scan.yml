@@ -46,7 +46,7 @@ jobs:
         run: |
           docker pull ghcr.io/zaproxy/zaproxy:stable
           docker run -v $(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t http://host.docker.internal:8080 \
+            zap-baseline.py -t http://localhost:8080 \
             -r zap-baseline-report.html -x zap-baseline-report.xml
 
       - name: Executar OWASP ZAP Full Scan
