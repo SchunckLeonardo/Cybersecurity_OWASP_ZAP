@@ -42,14 +42,12 @@ jobs:
           echo "Aplicação está respondendo!"
 
       - name: Executar OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.10.0
-        with:
-          target: 'http://localhost:8080'
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a -j -l PASS'
-          allow_issue_writing: false
-          artifact_name: 'zap-scan-report'
-          fail_action: false
+        continue-on-error: true
+        run: |
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+          docker run -v $(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://host.docker.internal:8080 \
+            -r zap-baseline-report.html -x zap-baseline-report.xml
 
       - name: Executar OWASP ZAP Full Scan
         run: |
