@@ -1,0 +1,43 @@
+name: OWASP ZAP Security Scan
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  zap_scan:
+    runs-on: ubuntu-latest
+    name: Scan de Segurança com OWASP ZAP
+
+    steps:
+      - name: 1. Checkout do código
+        uses: actions/checkout@v4
+
+      - name: 2. Setup do Java (JDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: 3. Build e Inicia a Aplicação em Background
+        run: |
+          ./gradlew bootRun &
+          echo "Aguardando a aplicação iniciar..."
+          sleep 60
+
+      - name: 4. OWASP ZAP Full Scan
+        uses: owasp/zap-action-full-scan@v0.10.0
+        with:
+          target: 'http://localhost:8080'
+          rules: |
+            * FAIL High
+            * FAIL Critical
+          cmd_options: '-r zap_report.html'
+
+      - name: 5. Upload do Relatório ZAP como Artefato
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Relatorio-ZAP # Nome do artefato que aparecerá no GitHub
+          path: ./zap_report.html # Caminho para o arquivo que será salvo
