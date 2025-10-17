@@ -47,7 +47,7 @@ jobs:
             --user $(id -u):$(id -g) \
             ghcr.io/zaproxy/zaproxy zap-baseline.py \
             -t http://127.0.0.1:8080 \
-            -c zap.yaml \
+            -z "-config home=/zap/wrk/" \
             -r report.html \
             -w report.md || echo "Scan ZAP concluído com possíveis alertas."
 
