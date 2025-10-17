@@ -20,24 +20,29 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: 3. Build e Inicia a Aplicação em Background
+      - name: 3. Build e inicia a aplicação
         run: |
           ./gradlew bootRun &
           echo "Aguardando a aplicação iniciar..."
-          sleep 60
+          for i in {1..30}; do
+            if curl -s http://localhost:8080 >/dev/null; then
+              echo "Aplicação está no ar!"
+              break
+            fi
+            echo "Aguardando..."
+            sleep 5
+          done
 
       - name: 4. OWASP ZAP Full Scan
-        uses: owasp/zap-full-scan-action@v0.11.0
+        uses: zaproxy/action-full-scan@v0.11.0
         with:
           target: 'http://localhost:8080'
-          rules: |
-            * FAIL High
-            * FAIL Critical
+          fail_action: true
           cmd_options: '-r zap_report.html'
 
       - name: 5. Upload do Relatório ZAP como Artefato
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Relatorio-ZAP # Nome do artefato que aparecerá no GitHub
-          path: ./zap_report.html # Caminho para o arquivo que será salvo
+          name: Relatorio-ZAP
+          path: zap_report.html
