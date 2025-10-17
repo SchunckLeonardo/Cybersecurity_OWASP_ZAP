@@ -34,63 +34,60 @@ jobs:
           ./gradlew bootRun &
           echo $! > app.pid
           echo "Aguardando aplicação iniciar..."
-          sleep 30
+          sleep 30 # Aguarda um tempo para a aplicação subir completamente
 
       - name: Verificar se aplicação está rodando
         run: |
           curl -f http://localhost:8080/actuator/health || exit 1
           echo "Aplicação está respondendo!"
 
-      - name: Executar OWASP ZAP Baseline Scan
+      - name: Executar OWASP ZAP Full Scan
+        # Usamos continue-on-error para que a análise dos resultados seja sempre executada
         continue-on-error: true
         run: |
-          docker pull ghcr.io/zaproxy/zaproxy:stable
-          docker run -v $(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t http://localhost:8080 \
-            -r zap-baseline-report.html -x zap-baseline-report.xml
-
-      - name: Executar OWASP ZAP Full Scan
-        run: |
-          docker run --network="host" -v $(pwd):/zap/wrk/:rw \
-            -t ghcr.io/zaproxy/zaproxy:stable bash -c \
-            "zap.sh -cmd -quickurl http://localhost:8080 -quickprogress -quickout /zap/wrk/zap-report.html"
+          docker run \
+            -v $(pwd):/zap/wrk/:rw \
+            --network="host" \
+            --user $(id -u):$(id -g) \
+            -t ghcr.io/zaproxy/zaproxy:stable \
+            zap-full-scan.py \
+              -t http://127.0.0.1:8080 \
+              -p 8090 \
+              -r zap-report.html \
+              -x zap-report.xml
 
       - name: Analisar resultados do ZAP
         id: analyze_zap
         run: |
-          if [ -f zap-report.html ]; then
+          if [ -f zap-report.xml ]; then
             echo "Relatório gerado com sucesso"
           
-            # Extrair informações do relatório
-            HIGH_ALERTS=$(grep -o "riskcode=\"3\"" zap-report.html | wc -l || echo "0")
-            CRITICAL_ALERTS=$(grep -o "riskcode=\"4\"" zap-report.html | wc -l || echo "0")
-            MEDIUM_ALERTS=$(grep -o "riskcode=\"2\"" zap-report.html | wc -l || echo "0")
-            LOW_ALERTS=$(grep -o "riskcode=\"1\"" zap-report.html | wc -l || echo "0")
-            INFO_ALERTS=$(grep -o "riskcode=\"0\"" zap-report.html | wc -l || echo "0")
+            # É mais confiável extrair de um XML
+            HIGH_ALERTS=$(grep -o '<riskcode>3</riskcode>' zap-report.xml | wc -l)
+            MEDIUM_ALERTS=$(grep -o '<riskcode>2</riskcode>' zap-report.xml | wc -l)
+            LOW_ALERTS=$(grep -o '<riskcode>1</riskcode>' zap-report.xml | wc -l)
+            INFO_ALERTS=$(grep -o '<riskcode>0</riskcode>' zap-report.xml | wc -l)
           
-            TOTAL_ALERTS=$((HIGH_ALERTS + CRITICAL_ALERTS + MEDIUM_ALERTS + LOW_ALERTS + INFO_ALERTS))
+            # Não existe risco "Crítico" (4) no ZAP por padrão, o mais alto é 3 (High)
+            TOTAL_ALERTS=$((HIGH_ALERTS + MEDIUM_ALERTS + LOW_ALERTS + INFO_ALERTS))
           
             echo "=== RESUMO DA ANÁLISE DE SEGURANÇA ==="
             echo "Total de alertas: $TOTAL_ALERTS"
-            echo "Críticos: $CRITICAL_ALERTS"
             echo "Altos: $HIGH_ALERTS"
             echo "Médios: $MEDIUM_ALERTS"
             echo "Baixos: $LOW_ALERTS"
             echo "Informativos: $INFO_ALERTS"
             echo "======================================"
           
-            # Exportar para variáveis de ambiente
             echo "high_alerts=$HIGH_ALERTS" >> $GITHUB_OUTPUT
-            echo "critical_alerts=$CRITICAL_ALERTS" >> $GITHUB_OUTPUT
             echo "total_alerts=$TOTAL_ALERTS" >> $GITHUB_OUTPUT
           
-            # Falhar se houver vulnerabilidades críticas ou altas
-            if [ "$CRITICAL_ALERTS" -gt 0 ] || [ "$HIGH_ALERTS" -gt 0 ]; then
-              echo "❌ FALHA: Vulnerabilidades críticas ou altas detectadas!"
+            if [ "$HIGH_ALERTS" -gt 0 ]; then
+              echo "❌ FALHA: Vulnerabilidades de nível alto detectadas!"
               exit 1
             fi
           else
-            echo "Erro: Relatório não foi gerado"
+            echo "Erro: Relatório XML não foi gerado"
             exit 1
           fi
 
@@ -103,6 +100,7 @@ jobs:
             zap-report.html
             zap-report.xml
           retention-days: 30
+          if-no-files-found: ignore # Evita erro se os arquivos não forem criados
 
       - name: Parar aplicação
         if: always()
@@ -116,20 +114,17 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const fs = require('fs');
-            const highAlerts = '${{ steps.analyze_zap.outputs.high_alerts }}';
-            const criticalAlerts = '${{ steps.analyze_zap.outputs.critical_alerts }}';
-            const totalAlerts = '${{ steps.analyze_zap.outputs.total_alerts }}';
+            const highAlerts = '${{ steps.analyze_zap.outputs.high_alerts || 0 }}';
+            const totalAlerts = '${{ steps.analyze_zap.outputs.total_alerts || 0 }}';
             
             const comment = `## 🔒 Relatório de Segurança - OWASP ZAP
             
             | Severidade | Quantidade |
             |------------|------------|
-            | 🔴 Crítico | ${criticalAlerts} |
             | 🟠 Alto    | ${highAlerts} |
-            | **Total**  | **${totalAlerts}** |
+            | **Total** | **${totalAlerts}** |
             
-            ${parseInt(criticalAlerts) + parseInt(highAlerts) > 0 ? '❌ **Pipeline falhou devido a vulnerabilidades críticas/altas**' : '✅ Nenhuma vulnerabilidade crítica detectada'}
+            ${parseInt(highAlerts) > 0 ? '❌ **Pipeline falhou devido a vulnerabilidades altas**' : '✅ Nenhuma vulnerabilidade de nível alto detectada'}
             
             📊 Baixe o relatório completo nos artefatos do workflow.
             `;
